@@ -36,32 +36,67 @@ DISTANCE_PRS = {7}
 # --------------------------------------------------------------------------
 
 
+def fnum(value):
+    """Coerce to float, or None if the field isn't numeric.
+
+    Garmin is inconsistent about types across endpoints and firmware
+    versions, so nothing from the API is trusted to be a number.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def date_str(value) -> str:
+    """Normalise Garmin's date encodings to YYYY-MM-DD.
+
+    Depending on the endpoint a date arrives as an ISO string, an epoch in
+    seconds, or an epoch in milliseconds.
+    """
+    if isinstance(value, str):
+        return value[:10]
+    ts = fnum(value)
+    if ts is None:
+        return ""
+    if ts > 1e11:  # milliseconds
+        ts /= 1000.0
+    try:
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+    except (ValueError, OSError, OverflowError):
+        return ""
+
+
 def hhmmss(seconds) -> str:
-    if not seconds:
+    secs = fnum(seconds)
+    if not secs:
         return "—"
-    seconds = int(round(seconds))
-    h, rem = divmod(seconds, 3600)
+    secs = int(round(secs))
+    h, rem = divmod(secs, 3600)
     m, s = divmod(rem, 60)
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
 def pace_str(dist_m, dur_s) -> str:
     """Pace as m:ss per km."""
-    if not dist_m or not dur_s or dist_m < 100:
+    spk = pace_seconds(dist_m, dur_s)
+    if spk is None:
         return "—"
-    spk = dur_s / (dist_m / 1000.0)
     m, s = divmod(int(round(spk)), 60)
     return f"{m}:{s:02d}"
 
 
 def pace_seconds(dist_m, dur_s):
-    if not dist_m or not dur_s or dist_m < 100:
+    dist, dur = fnum(dist_m), fnum(dur_s)
+    if not dist or not dur or dist < 100:
         return None
-    return dur_s / (dist_m / 1000.0)
+    return dur / (dist / 1000.0)
 
 
 def km(meters) -> float:
-    return round((meters or 0) / 1000.0, 1)
+    return round((fnum(meters) or 0) / 1000.0, 1)
 
 
 def num(value, digits=1, suffix=""):
@@ -75,7 +110,7 @@ def num(value, digits=1, suffix=""):
 
 
 def avg(values):
-    vals = [v for v in values if v is not None]
+    vals = [x for x in (fnum(v) for v in values) if x is not None]
     return statistics.mean(vals) if vals else None
 
 
@@ -106,16 +141,15 @@ def is_run(activity) -> bool:
 
 
 def act_date(activity):
-    raw = activity.get("startTimeLocal") or activity.get("startTimeGMT")
-    if not raw:
+    if not isinstance(activity, dict):
+        return None
+    stamp = date_str(activity.get("startTimeLocal") or activity.get("startTimeGMT"))
+    if not stamp:
         return None
     try:
-        return datetime.strptime(raw[:19], "%Y-%m-%d %H:%M:%S").date()
+        return datetime.strptime(stamp, "%Y-%m-%d").date()
     except ValueError:
-        try:
-            return datetime.fromisoformat(raw[:19]).date()
-        except ValueError:
-            return None
+        return None
 
 
 # --------------------------------------------------------------------------
@@ -129,11 +163,11 @@ def section_profile(snap) -> list[str]:
     settings = snap.get("profile_settings") or {}
     user = settings.get("userData") or {}
 
-    birth = user.get("birthDate")
+    birth = date_str(user.get("birthDate"))
     age = None
     if birth:
         try:
-            b = datetime.strptime(birth[:10], "%Y-%m-%d").date()
+            b = datetime.strptime(birth, "%Y-%m-%d").date()
             age = (date.today() - b).days // 365
         except ValueError:
             pass
@@ -145,7 +179,7 @@ def section_profile(snap) -> list[str]:
         vo2 = dig(snap, "training_status", "mostRecentVO2Max", "generic", "vo2MaxValue")
 
     lt_hr = dig(snap, "lactate_threshold", "speed_and_heart_rate", "heartRate")
-    lt_speed = dig(snap, "lactate_threshold", "speed_and_heart_rate", "speed")
+    lt_speed = fnum(dig(snap, "lactate_threshold", "speed_and_heart_rate", "speed"))
     lt_pace = "—"
     if lt_speed:
         # Garmin stores threshold speed in m/s.
@@ -162,7 +196,7 @@ def section_profile(snap) -> list[str]:
         ("גיל", age or "—"),
         ("מין", user.get("gender") or "—"),
         ("גובה", num(user.get("height"), 0, " ס\"מ") if user.get("height") else "—"),
-        ("משקל", num(weight_g / 1000, 1, ' ק"ג') if weight_g else "—"),
+        ("משקל", num((fnum(weight_g) or 0) / 1000, 1, ' ק"ג') if fnum(weight_g) else "—"),
         ("VO2max ריצה", num(vo2)),
         ("דופק מקסימלי (מוגדר בשעון)", user.get("maxHeartRate") or "—"),
         ("דופק מנוחה (מוגדר בשעון)", user.get("restingHeartRate") or "—"),
@@ -246,7 +280,12 @@ def section_prs(snap) -> list[str]:
         if not label:
             continue
         value = pr.get("value")
-        when = (pr.get("prStartTimeLocal") or pr.get("activityStartDateTimeLocal") or "")[:10]
+        when = date_str(
+            pr.get("prStartTimeGmtFormatted")
+            or pr.get("prStartTimeLocal")
+            or pr.get("activityStartDateTimeLocal")
+            or pr.get("prStartTimeGmt")
+        )
         shown = f"{km(value)} ק\"מ" if tid in DISTANCE_PRS else hhmmss(value)
         rows.append(f"| {label} | {shown} | {when or '—'} |")
 
@@ -270,11 +309,11 @@ def section_weekly(runs, weeks=16) -> tuple[list[str], list[dict]]:
     for i in range(weeks - 1, -1, -1):
         monday = this_monday - timedelta(weeks=i)
         acts = buckets.get(monday, [])
-        dist = sum(a.get("distance") or 0 for a in acts)
-        dur = sum(a.get("duration") or 0 for a in acts)
-        elev = sum(a.get("elevationGain") or 0 for a in acts)
-        longest = max((a.get("distance") or 0 for a in acts), default=0)
-        load = sum(a.get("activityTrainingLoad") or 0 for a in acts)
+        dist = sum(fnum(a.get("distance")) or 0 for a in acts)
+        dur = sum(fnum(a.get("duration")) or 0 for a in acts)
+        elev = sum(fnum(a.get("elevationGain")) or 0 for a in acts)
+        longest = max((fnum(a.get("distance")) or 0 for a in acts), default=0)
+        load = sum(fnum(a.get("activityTrainingLoad")) or 0 for a in acts)
         summary.append(
             {
                 "monday": monday,
@@ -326,7 +365,7 @@ def section_intensity(runs, days=56) -> list[str]:
         if not d or d < cutoff:
             continue
         for i in range(5):
-            zones[i] += r.get(f"hrTimeInZone_{i + 1}") or 0
+            zones[i] += fnum(r.get(f"hrTimeInZone_{i + 1}")) or 0
 
     total = sum(zones)
     if total <= 0:
@@ -392,7 +431,7 @@ def section_key_sessions(runs, limit=12) -> list[str]:
     scored = [
         (pace_seconds(r.get("distance"), r.get("duration")), r)
         for r in runs
-        if (r.get("distance") or 0) >= 3000 and act_date(r)
+        if (fnum(r.get("distance")) or 0) >= 3000 and act_date(r)
     ]
     scored = sorted([s for s in scored if s[0]], key=lambda x: x[0])[:5]
     if scored:
@@ -461,7 +500,7 @@ def section_sleep(daily) -> list[str]:
         dto = dig(rec, "sleep", "dailySleepDTO", default={})
         if not isinstance(dto, dict) or not dto.get("sleepTimeSeconds"):
             continue
-        start_ms = dto.get("sleepStartTimestampLocal")
+        start_ms = fnum(dto.get("sleepStartTimestampLocal"))
         bedtime = None
         if start_ms:
             try:
@@ -533,23 +572,23 @@ def section_recovery(daily) -> list[str]:
 
     for rec in daily:
         d = rec["date"]
-        v = dig(rec, "hrv", "hrvSummary", "lastNightAvg")
+        v = fnum(dig(rec, "hrv", "hrvSummary", "lastNightAvg"))
         if v:
             hrv.append((d, v))
         st = dig(rec, "hrv", "hrvSummary", "status")
         if st:
             hrv_status[st] += 1
 
-        r = dig(rec, "stats", "restingHeartRate")
+        r = fnum(dig(rec, "stats", "restingHeartRate"))
         if r:
             rhr.append((d, r))
-        s = dig(rec, "stats", "averageStressLevel")
+        s = fnum(dig(rec, "stats", "averageStressLevel"))
         if s and s > 0:
             stress.append((d, s))
-        b = dig(rec, "stats", "bodyBatteryMostValue")
+        b = fnum(dig(rec, "stats", "bodyBatteryMostValue"))
         if b:
             bb.append((d, b))
-        rd = dig(rec, "readiness", "score")
+        rd = fnum(dig(rec, "readiness", "score"))
         if rd:
             readiness.append((d, rd))
 
@@ -644,7 +683,7 @@ def section_flags(weekly, daily, runs) -> list[str]:
     if not flags:
         return ["## 10. דגלים אדומים", "", "לא זוהו דגלים אוטומטיים בחלון הנוכחי. ✅", ""]
 
-    return ["## 10. דגלים אדומים (זוהו אוטומטית)", "", *[f"- {f}" for f in flags], ""]
+    return ["## 10. דגלים אדומים (זוהו אוטומטית)", "", *[f"- {flag}" for flag in flags], ""]
 
 
 # --------------------------------------------------------------------------
