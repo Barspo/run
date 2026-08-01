@@ -182,8 +182,11 @@ def section_profile(snap) -> list[str]:
     lt_speed = fnum(dig(snap, "lactate_threshold", "speed_and_heart_rate", "speed"))
     lt_pace = "—"
     if lt_speed:
-        # Garmin stores threshold speed in m/s.
-        lt_pace = pace_str(1000, 1000 / lt_speed)
+        # Garmin stores threshold speed in m/s, but returns an implausible
+        # magnitude when it hasn't gathered enough data to calibrate.
+        spk = 1000 / lt_speed
+        if 120 <= spk <= 600:  # 2:00-10:00 per km
+            lt_pace = pace_str(1000, spk)
 
     weight_g = user.get("weight")
     weigh_ins = dig(snap, "weigh_ins", "dailyWeightSummaries", default=[])
@@ -580,7 +583,7 @@ def section_recovery(daily) -> list[str]:
             hrv_status[st] += 1
 
         r = fnum(dig(rec, "stats", "restingHeartRate"))
-        if r:
+        if r and 30 <= r <= 85:
             rhr.append((d, r))
         s = fnum(dig(rec, "stats", "averageStressLevel"))
         if s and s > 0:
@@ -636,6 +639,48 @@ def section_recovery(daily) -> list[str]:
             break
 
     return L + [""]
+
+
+def section_data_quality(daily) -> list[str]:
+    """Say plainly which metrics are missing or untrustworthy."""
+    total = len(daily)
+    if not total:
+        return []
+
+    sleep_days = sum(
+        1 for r in daily if dig(r, "sleep", "dailySleepDTO", "sleepTimeSeconds")
+    )
+    hrv_days = sum(1 for r in daily if dig(r, "hrv", "hrvSummary", "lastNightAvg"))
+    rhr = [fnum(dig(r, "stats", "restingHeartRate")) for r in daily]
+    rhr = [v for v in rhr if v]
+    bogus = [v for v in rhr if v > 85]
+
+    notes = []
+    if sleep_days / total < 0.3:
+        notes.append(
+            f"**שינה:** נתונים ב-{sleep_days} מתוך {total} לילות — השעון לא נלבש בשינה."
+        )
+    if hrv_days / total < 0.3:
+        notes.append(
+            f"**HRV:** נתונים ב-{hrv_days} מתוך {total} ימים — אין מדידה לילית."
+        )
+    if rhr and len(bogus) / len(rhr) > 0.5:
+        notes.append(
+            "**דופק מנוחה:** מעל 85 ברוב הימים — זה דופק בזמן פעילות, לא דופק מנוחה. "
+            "הערכים האלה סוננו מהדוח."
+        )
+    if not notes:
+        return []
+
+    return [
+        "## 0. איכות הנתונים — מה לא לסמוך עליו",
+        "",
+        *[f"- ⚠️ {n}" for n in notes],
+        "",
+        "> המדדים האלה הם מערכת ההתראה המוקדמת לעייפות יתר ולפציעה.",
+        "> בלעדיהם התמונה חלקית.",
+        "",
+    ]
 
 
 def section_flags(weekly, daily, runs) -> list[str]:
@@ -715,6 +760,7 @@ def build() -> str:
 
     parts = [
         header,
+        section_data_quality(daily),
         section_profile(snap),
         section_predictions(snap),
         section_prs(snap),
