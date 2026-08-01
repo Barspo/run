@@ -29,33 +29,30 @@ git checkout claude/running-coach-garmin-j8fv17
 
 ### 2. התקנה
 
+**Windows:** לחיצה כפולה על **`setup.bat`**
+
 **Mac / Linux:**
 ```bash
 ./setup.sh
 ```
 
-**Windows (PowerShell):**
-```powershell
-python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt
-```
+> ⚠️ בווינדוס אל תלחץ על קבצי `.sh` — הם של Mac ולינוקס בלבד.
+> אם ווינדוס שואל "באיזו אפליקציה לפתוח את הקובץ" — סגור את החלון
+> והשתמש בקובץ ה-`.bat` במקום.
 
-צריך Python 3.10 ומעלה. לבדיקה: `python3 --version`.
+צריך Python 3.10 ומעלה. לבדיקה: `python3 --version` (בווינדוס: `py --version`).
 אם אין — [python.org/downloads](https://www.python.org/downloads/).
-בהתקנה בווינדוס סמן **"Add Python to PATH"**.
+בהתקנה בווינדוס **חובה לסמן "Add Python to PATH"** במסך הראשון.
 
 ---
 
 ## שימוש
 
+**Windows:** לחיצה כפולה על **`run.bat`**
+
 **Mac / Linux:**
 ```bash
 ./run.sh
-```
-
-**Windows:**
-```powershell
-.venv\Scripts\python coach.py sync
 ```
 
 בהרצה הראשונה תתבקש:
