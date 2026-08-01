@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""נקודת כניסה אחת. ברוב המקרים תריץ רק:  python3 coach.py sync"""
+"""Single entry point. Normally you only need:  python3 coach.py sync"""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def cmd_report(_args) -> int:
 
 def cmd_login(_args) -> int:
     garmin_pull.connect()
-    print("החיבור עובד. הטוקן נשמר — בפעם הבאה לא תצטרך סיסמה או MFA.")
+    print("Connection works. Token saved - no password or MFA needed next time.")
     return 0
 
 
@@ -35,20 +35,20 @@ def main(argv: list[str]) -> int:
     import argparse
 
     p = argparse.ArgumentParser(
-        prog="coach.py", description="מאמן ריצה — שכבת הנתונים מול Garmin Connect"
+        prog="coach.py", description="Running coach - Garmin Connect data layer"
     )
     sub = p.add_subparsers(dest="cmd")
 
-    s = sub.add_parser("sync", help="משיכת נתונים + בניית הדוח (ברירת מחדל)")
+    s = sub.add_parser("sync", help="fetch data and build the report (default)")
     s.add_argument("--activity-days", type=int, default=365)
     s.add_argument("--wellness-days", type=int, default=90)
     s.add_argument("--refresh", action="store_true")
     s.set_defaults(func=cmd_sync)
 
-    r = sub.add_parser("report", help="בניית הדוח מנתונים שכבר ירדו (בלי אינטרנט)")
+    r = sub.add_parser("report", help="rebuild the report from cached data (offline)")
     r.set_defaults(func=cmd_report)
 
-    lg = sub.add_parser("login", help="בדיקת חיבור בלבד")
+    lg = sub.add_parser("login", help="test the connection only")
     lg.set_defaults(func=cmd_login)
 
     args = p.parse_args(argv or ["sync"])
@@ -59,7 +59,7 @@ def main(argv: list[str]) -> int:
     try:
         return args.func(args)
     except KeyboardInterrupt:
-        print("\nבוטל.")
+        print("\nCancelled.")
         return 130
 
 

@@ -38,7 +38,7 @@ CALL_DELAY = 0.35
 
 
 def _prompt_mfa() -> str:
-    return input("\n>> קוד האימות שנשלח אליך (MFA), 6 ספרות: ").strip()
+    return input("\n>> Enter the MFA code sent to you (6 digits): ").strip()
 
 
 def connect(email: str | None = None, password: str | None = None) -> Garmin:
@@ -55,14 +55,16 @@ def connect(email: str | None = None, password: str | None = None) -> Garmin:
     except (GarminConnectAuthenticationError, FileNotFoundError):
         # No usable token cache -> we need credentials for a fresh login.
         if not email or not password:
-            email = email or input("אימייל של חשבון Garmin Connect: ").strip()
+            email = email or input("Garmin Connect email: ").strip()
             import getpass
 
-            password = password or getpass.getpass("סיסמה (לא נשמרת בשום מקום): ")
+            password = password or getpass.getpass(
+                "Password (hidden while typing - just type it and press Enter): "
+            )
             api = Garmin(email=email, password=password, prompt_mfa=_prompt_mfa)
         api.login(tokenstore=str(TOKENS))
 
-    print(f"[OK] מחובר כ- {api.full_name or api.display_name}")
+    print(f"[OK] Logged in as {api.full_name or api.display_name}")
     return api
 
 
@@ -76,15 +78,15 @@ def safe(label: str, fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except GarminConnectTooManyRequestsError:
-        print(f"  ! {label}: Garmin חוסם זמנית (rate limit) — ממתין 60 שניות")
+        print(f"  ! {label}: rate limited by Garmin - waiting 60s")
         time.sleep(60)
         try:
             return fn(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001
-            print(f"  ! {label}: נכשל שוב ({type(exc).__name__}) — מדלג")
+            print(f"  ! {label}: failed again ({type(exc).__name__}) - skipping")
             return None
     except Exception as exc:  # noqa: BLE001
-        print(f"  - {label}: לא זמין ({type(exc).__name__}) — מדלג")
+        print(f"  - {label}: not available ({type(exc).__name__}) - skipping")
         return None
 
 
@@ -100,7 +102,7 @@ def _write(path: Path, payload) -> None:
 
 def pull_snapshot(api: Garmin, today: date) -> dict:
     """One-off metrics that describe the athlete right now."""
-    print("\n[1/3] פרופיל, שיאים ומדדי כושר...")
+    print("\n[1/3] Profile, personal records and fitness metrics...")
     d = today.isoformat()
     year_ago = (today - timedelta(days=365)).isoformat()
 
@@ -144,17 +146,17 @@ def pull_snapshot(api: Garmin, today: date) -> dict:
 
 def pull_activities(api: Garmin, today: date, days: int) -> list:
     """Every activity in the window, newest first."""
-    print(f"\n[2/3] אימונים ({days} ימים אחורה)...")
+    print(f"\n[2/3] Activities (last {days} days)...")
     start = (today - timedelta(days=days)).isoformat()
     acts = safe("activities", api.get_activities_by_date, start, today.isoformat())
     acts = acts or []
-    print(f"  נמצאו {len(acts)} פעילויות")
+    print(f"  found {len(acts)} activities")
     return acts
 
 
 def pull_daily(api: Garmin, today: date, days: int, refresh: bool) -> int:
     """Per-day wellness: stats, sleep, HRV, training readiness. Cached per day."""
-    print(f"\n[3/3] שינה / HRV / דופק מנוחה ({days} ימים אחורה)...")
+    print(f"\n[3/3] Sleep / HRV / resting HR (last {days} days)...")
     DAILY.mkdir(parents=True, exist_ok=True)
     fetched = 0
 
@@ -179,10 +181,10 @@ def pull_daily(api: Garmin, today: date, days: int, refresh: bool) -> int:
         fetched += 1
 
         if fetched % 10 == 0:
-            print(f"  ...{fetched} ימים")
+            print(f"  ...{fetched} days")
         time.sleep(CALL_DELAY)
 
-    print(f"  הורדו {fetched} ימים חדשים (השאר כבר היו בקאש)")
+    print(f"  downloaded {fetched} new days (the rest were cached)")
     return fetched
 
 
@@ -198,7 +200,7 @@ def pull_all(
     _write(RAW / "activities.json", pull_activities(api, today, activity_days))
     pull_daily(api, today, wellness_days, refresh)
 
-    print(f"\n[OK] הנתונים נשמרו ב- {RAW}")
+    print(f"\n[OK] Data saved to {RAW}")
 
 
 # --------------------------------------------------------------------------
@@ -220,11 +222,11 @@ def main(argv: list[str]) -> int:
     try:
         api = connect()
     except GarminConnectAuthenticationError as exc:
-        print(f"\n[שגיאה] ההתחברות נכשלה: {exc}", file=sys.stderr)
-        print("בדוק אימייל/סיסמה, ואם יש MFA — הזן את הקוד כשמתבקש.", file=sys.stderr)
+        print(f"\n[ERROR] Login failed: {exc}", file=sys.stderr)
+        print("Check your email/password, and enter the MFA code if asked.", file=sys.stderr)
         return 1
     except GarminConnectConnectionError as exc:
-        print(f"\n[שגיאה] בעיית תקשורת מול Garmin: {exc}", file=sys.stderr)
+        print(f"\n[ERROR] Connection problem with Garmin: {exc}", file=sys.stderr)
         return 1
 
     pull_all(

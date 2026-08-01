@@ -692,14 +692,14 @@ def build() -> str:
 
 def main() -> int:
     if not (RAW / "activities.json").exists():
-        print("לא נמצאו נתונים. הרץ קודם: python3 garmin_pull.py")
+        print("No data found. Run the sync first.")
         return 1
 
     text = build()
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(text, encoding="utf-8")
-    print(f"[OK] הדוח נכתב ל- {OUT}")
-    print(f"     {len(text.splitlines())} שורות. פתח אותו, העתק הכל, הדבק בצ'אט.")
+    print(f"[OK] Report written to {OUT}")
+    print(f"     {len(text.splitlines())} lines. Open it, copy all, paste into the chat.")
     return 0
 
 
